@@ -26,6 +26,9 @@ var (
 // alignRequests updates the requests with all details for fetching, making sure all metrics are in the same, optimal interval
 // note: it is assumed that all requests have the same from & to.
 // also takes a "now" value which we compare the TTL against
+// set up for normalizing (to same step)
+// choose highest resolution possible within ttl
+// subjects the request to the max-points-per-req-{soft,hard} settings
 func alignRequests(now, from, to uint32, reqs []models.Req) ([]models.Req, uint32, uint32, error) {
 	tsRange := to - from
 
@@ -131,7 +134,7 @@ func alignRequests(now, from, to uint32, reqs []models.Req) ([]models.Req, uint3
 			}
 			if req.ArchInterval != interval {
 				// we have not been able to find an archive matching the desired output interval
-				// we will have to apply runtime consolidation
+				// we will have to apply normalization
 				// we use the initially found archive as starting point. there could be some cases - if you have exotic settings -
 				// where it may be more efficient to pick a lower res archive as starting point (it would still require an interval
 				// divisible by the output interval) but let's not worry about that edge case.

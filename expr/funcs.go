@@ -21,6 +21,11 @@ type GraphiteFunc interface {
 	// NewPlan() will only create the plan if the expressions it parsed correspond to the signatures provided by the function
 	Signature() ([]Arg, []Arg)
 
+	// Align tells whether input series can be pre-aligned
+	// for example sum(foo.*) can only operate on series with the same step.
+	// some functions may not be able to deduce confidently that all its inputs should be normalized
+	Align() bool
+
 	// Context allows a func to alter the context that will be passed down the expression tree.
 	// this function will be called after validating and setting up all non-series and non-serieslist parameters.
 	// (as typically, context alterations require integer/string/bool/etc parameters, and shall affect series[list] parameters)

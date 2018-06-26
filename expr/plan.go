@@ -29,7 +29,7 @@ func NewReq(query string, from, to uint32, cons consolidation.Consolidator) Req 
 }
 
 type Plan struct {
-	Reqs          []Req          // data that needs to be fetched before functions can be executed
+	Reqs          [][]Req        // data that needs to be fetched before functions can be executed, grouped in sets that need to be step-aligned together
 	funcs         []GraphiteFunc // top-level funcs to execute, the head of each tree for each target
 	exprs         []*expr
 	MaxDataPoints uint32
@@ -63,7 +63,7 @@ func (p Plan) Dump(w io.Writer) {
 // * validation of arguments
 // * allow functions to modify the Context (change data range or consolidation)
 // * future version: allow functions to mark safe to pre-aggregate using consolidateBy or not
-func NewPlan(exprs []*expr, from, to, mdp uint32, stable bool, reqs []Req) (Plan, error) {
+func NewPlan(exprs []*expr, from, to, mdp uint32, stable bool, reqs [][]Req) (Plan, error) {
 	var err error
 	var funcs []GraphiteFunc
 	for _, e := range exprs {
@@ -89,7 +89,7 @@ func NewPlan(exprs []*expr, from, to, mdp uint32, stable bool, reqs []Req) (Plan
 }
 
 // newplan adds requests as needed for the given expr, resolving function calls as needed
-func newplan(e *expr, context Context, stable bool, reqs []Req) (GraphiteFunc, []Req, error) {
+func newplan(e *expr, context Context, stable bool, reqs [][]Req) (GraphiteFunc, []Req, error) {
 	if e.etype != etFunc && e.etype != etName {
 		return nil, nil, errors.New("request must be a function call or metric pattern")
 	}
