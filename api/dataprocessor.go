@@ -113,6 +113,7 @@ func Fix(in []schema.Point, from, to, interval uint32) []schema.Point {
 			o -= 1
 		}
 	}
+	pointSlicePool.Put(in[:0])
 
 	return out
 }
@@ -135,6 +136,7 @@ func divide(pointsA, pointsB []schema.Point) []schema.Point {
 	for i := range pointsA {
 		pointsA[i].Val /= pointsB[i].Val
 	}
+	pointSlicePool.Put(pointsB[:0])
 	return pointsA
 }
 
@@ -632,6 +634,9 @@ func mergeSeries(in []models.Series) []models.Series {
 						break
 					}
 				}
+			}
+			for j := 1; j < len(series); j++ {
+				pointSlicePool.Put(series[j].Datapoints[:0])
 			}
 			merged[i] = series[0]
 		}
