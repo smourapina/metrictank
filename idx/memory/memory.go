@@ -4,12 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/grafana/globalconf"
 	"github.com/grafana/metrictank/conf"
@@ -18,6 +20,7 @@ import (
 	"github.com/grafana/metrictank/mdata"
 	"github.com/grafana/metrictank/stats"
 	"github.com/raintank/schema"
+	goi "github.com/robert-milan/go-object-interning"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -155,15 +158,19 @@ func (t *TagIndex) addTagId(name, value string, id schema.MKey) {
 	ti[name][value][id] = struct{}{}
 }
 
-func (t *TagIndex) delTagId(name, value string, id schema.MKey) {
+func (t *TagIndex) delTagId(name, value string, id schema.MKey, m *MemoryIdx) {
 	ti := *t
 
 	delete(ti[name][value], id)
 
 	if len(ti[name][value]) == 0 {
 		delete(ti[name], value)
+		vPtr, _ := m.objIntern.GetNoRefCnt([]byte(value))
+		m.internReleasePtr(vPtr)
 		if len(ti[name]) == 0 {
 			delete(ti, name)
+			nPtr, _ := m.objIntern.GetNoRefCnt([]byte(name))
+			m.internReleasePtr(nPtr)
 		}
 	}
 }
@@ -252,15 +259,26 @@ type UnpartitionedMemoryIdx struct {
 	tags        map[uint32]TagIndex // by orgId
 
 	findCache *FindCache
+
+	// used to intern objects used by the index to reduce memory overhead
+	// currently it is only used by the tag index
+	objIntern *goi.ObjectIntern
 }
 
 func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
+	oiCnf := goi.NewConfig()
+	oiCnf.CompressionType = goi.NOCPRSN
 	return &UnpartitionedMemoryIdx{
 		defById:     make(map[schema.MKey]*idx.Archive),
 		defByTagSet: make(defByTagSet),
 		tree:        make(map[uint32]*Tree),
 		tags:        make(map[uint32]TagIndex),
+<<<<<<< HEAD
 		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueueSize, findCacheInvalidateMaxSize, findCacheInvalidateMaxWait, findCacheBackoffTime),
+=======
+		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueue, findCacheBackoff),
+		objIntern:   goi.NewObjectIntern(oiCnf),
+>>>>>>> add initial memory interning logic
 	}
 }
 
@@ -333,6 +351,17 @@ func (m *UnpartitionedMemoryIdx) AddOrUpdate(mkey schema.MKey, data *schema.Metr
 	m.Lock()
 	defer m.Unlock()
 
+	//re-check that it wasn't added while switching locks
+	existing, ok = m.defById[mkey]
+	if ok {
+		log.Debugf("memory-idx: metricDef with id %s already in index.", mkey)
+		bumpLastUpdate(&existing.LastUpdate, data.Time)
+		oldPart := atomic.SwapInt32(&existing.Partition, partition)
+		statUpdate.Inc()
+		statUpdateDuration.Value(time.Since(pre))
+		return *existing, oldPart, ok
+	}
+
 	def := schema.MetricDefinitionFromMetricData(data)
 	def.Partition = partition
 	archive := m.add(def)
@@ -354,6 +383,42 @@ func (m *UnpartitionedMemoryIdx) UpdateArchive(archive idx.Archive) {
 		return
 	}
 	*(m.defById[archive.Id]) = archive
+}
+
+// get or add an object in the interning store
+// return a string with data pointed to the interned data
+// this assumes that no compression is used in the store
+func (m *MemoryIdx) internAcquire(sz string) (string, error) {
+	objPtr, err := m.objIntern.AddOrGet([]byte(sz))
+	if err != nil {
+		return sz, err
+	}
+
+	// create a new string to avoid any unwanted side effects
+	// of accidentally calling this method and passing in a string
+	// that is stored in a slice, or something similar.
+	var internedSz string
+	szHeader := (*reflect.StringHeader)(unsafe.Pointer(&internedSz))
+	szHeader.Data = objPtr
+	szHeader.Len = len(sz)
+
+	return internedSz, nil
+}
+
+// release a previously acquired string from the interning store
+// calling this on a string that was not interned won't have any negative effects
+// aside from wasting cycles
+func (m *MemoryIdx) internRelease(sz string) error {
+	_, err := m.objIntern.Delete((*(*reflect.StringHeader)(unsafe.Pointer(&sz))).Data)
+	return err
+}
+
+func (m *MemoryIdx) internReleasePtr(ptr uintptr) error {
+	if ptr == 0 {
+		return nil
+	}
+	_, err := m.objIntern.Delete(ptr)
+	return err
 }
 
 // indexTags reads the tags of a given metric definition and creates the
@@ -378,6 +443,12 @@ func (m *UnpartitionedMemoryIdx) indexTags(def *schema.MetricDefinition) {
 
 		tagName := tagSplits[0]
 		tagValue := tagSplits[1]
+
+		// we don't care if an error is returned for now
+		// because the original string will be returned
+		// and at least the process can still continue
+		tagName, _ = m.internAcquire(tagName)
+		tagValue, _ = m.internAcquire(tagValue)
 		tags.addTagId(tagName, tagValue, def.Id)
 	}
 	tags.addTagId("name", def.Name, def.Id)
@@ -403,10 +474,10 @@ func (m *UnpartitionedMemoryIdx) deindexTags(tags TagIndex, def *schema.MetricDe
 
 		tagName := tagSplits[0]
 		tagValue := tagSplits[1]
-		tags.delTagId(tagName, tagValue, def.Id)
+		tags.delTagId(tagName, tagValue, def.Id, m)
 	}
 
-	tags.delTagId("name", def.Name, def.Id)
+	tags.delTagId("name", def.Name, def.Id, m)
 
 	m.defByTagSet.del(def)
 
