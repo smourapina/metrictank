@@ -109,9 +109,9 @@ func ConfigProcess() {
 // this is needed to support unit tests.
 type MemoryIndex interface {
 	idx.MetricIndex
-	LoadPartition(int32, []schema.MetricDefinition) int
+	LoadPartition(int32, []idx.MetricDefinition) int
 	UpdateArchive(idx.Archive)
-	add(*schema.MetricDefinition) idx.Archive
+	add(*idx.MetricDefinition) idx.Archive
 	idsByTagQuery(uint32, TagQuery) IdSet
 	PurgeFindCache()
 	ForceInvalidationFindCache()
@@ -124,6 +124,7 @@ func New() MemoryIndex {
 	return NewUnpartitionedMemoryIdx()
 }
 
+// Tree is the top level struct in the hierarchical index for a given OrgID
 type Tree struct {
 	Items map[string]*Node // key is the full path of the node.
 }
