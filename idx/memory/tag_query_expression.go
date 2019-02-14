@@ -44,6 +44,7 @@ type expression interface {
 	getOperator() match
 	getMatcher() tagStringMatcher
 	getMetaRecords(metaTagIndex) []uint32
+	getMetaRecordFilter([]metaRecordEvaluator) tagFilter
 	hasRe() bool
 	matchesTag() bool
 	isPositiveOperator() bool
@@ -227,4 +228,16 @@ func (e *expressionCommon) getMatcher() tagStringMatcher {
 func (e *expressionCommon) getMetaRecords(mti metaTagIndex) []uint32 {
 	// only used with positive expressions
 	return nil
+}
+
+func (e *expressionCommon) getMetaRecordFilterWithDecision(evaluators []metaRecordEvaluator, decision filterDecision) tagFilter {
+	return func(def *idx.Archive) filterDecision {
+		for _, evaluator := range evaluators {
+			if evaluator(def) {
+				return decision
+			}
+		}
+
+		return none
+	}
 }

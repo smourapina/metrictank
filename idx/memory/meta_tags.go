@@ -6,6 +6,8 @@ import (
 	"hash/fnv"
 	"sort"
 	"strings"
+
+	"github.com/grafana/metrictank/idx"
 )
 
 // the collision avoidance window defines how many times we try to find a higher
@@ -178,6 +180,32 @@ func (m *metaTagRecord) hasMetaTags() bool {
 	return len(m.metaTags) > 0
 }
 
+// a metaRecordEvaluator is a function that takes a metric definition, looks
+// at its metric tags, and then decides whether the given metric should be
+// tagged with this meta tag or not. It returns a bool
+type metaRecordEvaluator func(*idx.Archive) bool
+
+// getEvaluator returns a metaRecordEvaluator for this meta record
+func (m *metaTagRecord) getEvaluator() metaRecordEvaluator {
+	filters := make([]tagFilter, len(m.queries))
+	defaultDecisions := make([]filterDecision, len(m.queries))
+	for i, query := range m.queries {
+		filters[i] = query.getFilter()
+		defaultDecisions[i] = query.getDefaultDecision()
+	}
+
+	return func(def *idx.Archive) bool {
+		for i, filter := range filters {
+			decision := filter(def)
+			if decision == fail || (decision == none && defaultDecisions[i] == fail) {
+				return false
+			}
+		}
+
+		return true
+	}
+}
+
 // upsert inserts or updates a meta tag record according to the given specifications
 // it uses the set of tag query expressions as the identity of the record, if a record with the
 // same identity is already present then its meta tags get updated to the specified ones.
@@ -242,4 +270,16 @@ func (m metaTagRecords) upsert(metaTags []string, metricTagQueryExpressions []st
 	}
 
 	return 0, nil, 0, nil, fmt.Errorf("MetaTagRecordUpsert: Unable to find a slot to insert record")
+}
+
+func (m metaTagRecords) getRecords(ids []uint32) []metaTagRecord {
+	res := make([]metaTagRecord, 0, len(ids))
+
+	for _, id := range ids {
+		if record, ok := m[id]; ok {
+			res = append(res, record)
+		}
+	}
+
+	return res
 }
