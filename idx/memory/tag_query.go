@@ -203,6 +203,13 @@ KEYS:
 	close(idCh)
 }
 
+func (q *TagQuery) initForIndex(defById map[schema.MKey]*idx.Archive, idx TagIndex, mti metaTagIndex, mtr metaTagRecords) {
+	q.index = idx
+	q.byId = defById
+	q.metaIndex = mti
+	q.metaRecords = mtr
+}
+
 // getInitialByPrefix generates the initial resultset by executing the given prefix match expression
 func (q *TagQuery) getInitialByPrefix(expr kv, idCh chan schema.MKey, stopCh chan struct{}) {
 	defer q.wg.Done()
