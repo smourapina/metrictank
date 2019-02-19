@@ -111,7 +111,7 @@ type MemoryIndex interface {
 	LoadPartition(int32, []schema.MetricDefinition) int
 	UpdateArchive(idx.Archive)
 	add(*schema.MetricDefinition) idx.Archive
-	idsByTagQuery(uint32, TagQuery) IdSet
+	idsByTagQuery(uint32, *TagQuery) IdSet
 	PurgeFindCache()
 	ForceInvalidationFindCache()
 }
@@ -360,7 +360,7 @@ func (m *UnpartitionedMemoryIdx) UpdateArchive(archive idx.Archive) {
 	*(m.defById[archive.Id]) = archive
 }
 
-func (m *MemoryIdx) MetaTagRecordUpsert(orgId uint32, rawRecord idx.MetaTagRecord) (*idx.MetaTagRecord, error) {
+func (m *UnpartitionedMemoryIdx) MetaTagRecordUpsert(orgId uint32, rawRecord idx.MetaTagRecord) (*idx.MetaTagRecord, error) {
 	if !TagSupport {
 		log.Warn("memory-idx: received tag query, but tag support is disabled")
 		return nil, nil
@@ -416,7 +416,7 @@ func (m *MemoryIdx) MetaTagRecordUpsert(orgId uint32, rawRecord idx.MetaTagRecor
 	}
 }
 
-func (m *MemoryIdx) MetaTagRecordList(orgId uint32) []idx.MetaTagRecord {
+func (m *UnpartitionedMemoryIdx) MetaTagRecordList(orgId uint32) []idx.MetaTagRecord {
 	builder := strings.Builder{}
 	res := make([]idx.MetaTagRecord, 0, len(m.metaTagRecords))
 
@@ -437,6 +437,16 @@ func (m *MemoryIdx) MetaTagRecordList(orgId uint32) []idx.MetaTagRecord {
 	}
 
 	return res
+}
+
+func (m *UnpartitionedMemoryIdx) EnrichWithMetaTags(orgId uint32, tags map[string]string) map[string]string {
+	m.RLock()
+	defer m.RUnlock()
+	if mtr, ok := m.metaTagRecords[orgId]; !ok {
+		return nil
+	} else {
+		return mtr.enrichTags(tags)
+	}
 }
 
 // indexTags reads the tags of a given metric definition and creates the

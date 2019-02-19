@@ -22,9 +22,12 @@ func init() {
 	queryHash = fnv.New32a
 }
 
+type metaRecordFilter func(map[string]string) bool
+
 type metaTagRecord struct {
-	metaTags []kv
-	queries  []expression
+	metaTags     []kv
+	queries      []expression
+	filterByTags metaRecordFilter
 }
 
 // list of meta records keyed by random unique identifier
@@ -62,11 +65,11 @@ func (m metaTagIndex) insertRecord(keyValue kv, hash uint32) {
 	values[keyValue.value] = append(values[keyValue.value], hash)
 }
 
-// metaTagRecordFromStrings takes two slices of strings, parses them and returns a metaTagRecord
+// newMetaTagRecord takes two slices of strings, parses them and returns a metaTagRecord
 // The first slice of strings are the meta tags & values
 // The second slice is the tag query expressions which the meta key & values refer to
 // On parsing error the second returned value is an error, otherwise it is nil
-func metaTagRecordFromStrings(metaTags []string, tagQueryExpressions []string) (metaTagRecord, error) {
+func newMetaTagRecord(metaTags []string, tagQueryExpressions []string) (metaTagRecord, error) {
 	record := metaTagRecord{
 		metaTags: make([]kv, 0, len(metaTags)),
 		queries:  make([]expression, 0, len(tagQueryExpressions)),
@@ -91,6 +94,8 @@ func metaTagRecordFromStrings(metaTags []string, tagQueryExpressions []string) (
 		}
 		record.queries = append(record.queries, parsed)
 	}
+
+	record.buildMetaRecordFilter()
 
 	return record, nil
 }
@@ -180,6 +185,69 @@ func (m *metaTagRecord) hasMetaTags() bool {
 	return len(m.metaTags) > 0
 }
 
+// buildMetaRecordFilter builds a function to which a set of tags&values can be passed,
+// it then evaluate whether the queries of this meta tag record all match with the given tags
+// this is used for the series enrichment
+func (m *metaTagRecord) buildMetaRecordFilter() {
+	queries := make([]expression, len(m.queries))
+	copy(queries, m.queries)
+
+	// we want to sort the queries so the regexes come last, because they are more expensive
+	sort.Slice(queries, func(i, j int) bool {
+		iHasRe := queries[i].hasRe()
+		jHasRe := queries[j].hasRe()
+
+		// when both have a regex or both have no regex, they are considered equal
+		if iHasRe == jHasRe {
+			return false
+		}
+
+		// if i has no regex, but j has one, i is considered cheaper
+		if iHasRe == false {
+			return true
+		}
+
+		// if j has no regex, but i has one, then j is considered cheaper
+		return false
+	})
+
+	// generate all the filter functions for each of the queries
+	filters := make([]func(string, string) bool, 0, len(queries))
+	for _, query := range queries {
+		matcher := query.getMatcher()
+		if query.matchesTag() {
+			filters = append(filters, func(tag, value string) bool {
+				return matcher(tag)
+			})
+			continue
+		}
+		queryKey := query.getKey()
+		filters = append(filters, func(tag, value string) bool {
+			if tag != queryKey {
+				return false
+			}
+			return matcher(value)
+		})
+	}
+
+	// generate one function which applies all filters to the given set of tags & values
+	m.filterByTags = func(tags map[string]string) bool {
+	FILTERS:
+		for _, filter := range filters {
+			for tag, value := range tags {
+				if filter(tag, value) {
+					// if one tag/value satisfies the filter we can move on to the next filer
+					continue FILTERS
+				}
+			}
+
+			// if we checked all tag/value pairs, but none satisfied the filter, return false
+			return false
+		}
+		return true
+	}
+}
+
 // a metaRecordEvaluator is a function that takes a metric definition, looks
 // at its metric tags, and then decides whether the given metric should be
 // tagged with this meta tag or not. It returns a bool
@@ -217,7 +285,7 @@ func (m *metaTagRecord) getEvaluator() metaRecordEvaluator {
 // 4) Pointer to the metaTagRecord that has been replaced if an update was performed, otherwise nil
 // 5) Error if an error occurred, otherwise it's nil
 func (m metaTagRecords) upsert(metaTags []string, metricTagQueryExpressions []string) (uint32, *metaTagRecord, uint32, *metaTagRecord, error) {
-	record, err := metaTagRecordFromStrings(metaTags, metricTagQueryExpressions)
+	record, err := newMetaTagRecord(metaTags, metricTagQueryExpressions)
 	if err != nil {
 		return 0, nil, 0, nil, err
 	}
@@ -278,6 +346,19 @@ func (m metaTagRecords) getRecords(ids []uint32) []metaTagRecord {
 	for _, id := range ids {
 		if record, ok := m[id]; ok {
 			res = append(res, record)
+		}
+	}
+
+	return res
+}
+
+func (m metaTagRecords) enrichTags(tags map[string]string) map[string]string {
+	res := make(map[string]string)
+	for _, mtr := range m {
+		if mtr.filterByTags(tags) {
+			for _, kv := range mtr.metaTags {
+				res[kv.key] = kv.value
+			}
 		}
 	}
 
