@@ -416,8 +416,8 @@ func (m *UnpartitionedMemoryIdx) indexTags(def *idx.MetricDefinition) {
 		tags.addTagId(tag.Key, tag.Value, def.Id)
 	}
 	// TODO: add special case to handle name and intern the entire thing
-	nameKey, _ := idx.IdxIntern.AddOrGet([]byte("name"))
-	nameValue, _ := idx.IdxIntern.AddOrGet([]byte(def.Name.String()))
+	nameKey, _ := idx.IdxIntern.AddOrGet([]byte("name"), false)
+	nameValue, _ := idx.IdxIntern.AddOrGet([]byte(def.Name.String()), false)
 	tags.addTagId(nameKey, nameValue, def.Id)
 
 	m.defByTagSet.add(def)
@@ -433,8 +433,8 @@ func (m *UnpartitionedMemoryIdx) deindexTags(tags TagIndex, def *idx.MetricDefin
 		tags.delTagId(tag.Key, tag.Value, def.Id, m)
 	}
 
-	nameKey, _ := idx.IdxIntern.GetNoRefCntCompressed([]byte("name"))
-	nameValue, _ := idx.IdxIntern.GetNoRefCntCompressed([]byte(def.Name.String()))
+	nameKey, _ := idx.IdxIntern.GetPtrFromByte([]byte("name"))
+	nameValue, _ := idx.IdxIntern.GetPtrFromByte([]byte(def.Name.String()))
 	tags.delTagId(nameKey, nameValue, def.Id, m)
 
 	m.defByTagSet.del(def)
@@ -638,7 +638,7 @@ func (m *UnpartitionedMemoryIdx) TagDetails(orgId uint32, key, filter string, fr
 		return nil, nil
 	}
 
-	keyPtr, err := idx.IdxIntern.GetNoRefCntCompressed([]byte(key))
+	keyPtr, err := idx.IdxIntern.GetPtrFromByte([]byte(key))
 	if err != nil {
 		log.Error("memory-idx: Failed to retrieve interned string for tag key: ", err)
 		internError.Inc()
@@ -651,7 +651,7 @@ func (m *UnpartitionedMemoryIdx) TagDetails(orgId uint32, key, filter string, fr
 
 	res := make(map[string]uint64)
 	for valuePtr, ids := range values {
-		value, err := idx.IdxIntern.GetNoRefCntString(valuePtr)
+		value, err := idx.IdxIntern.GetStringFromPtr(valuePtr)
 		if err != nil {
 			log.Error("memory-idx: Failed to retrieve interned string for tag value: ", err)
 			internError.Inc()
@@ -745,7 +745,7 @@ func (m *UnpartitionedMemoryIdx) FindTags(orgId uint32, prefix string, expressio
 
 		tagsSorted := make([]string, 0, len(tags))
 		for tagPtr := range tags {
-			tag, err := idx.IdxIntern.GetNoRefCntString(tagPtr)
+			tag, err := idx.IdxIntern.GetStringFromPtr(tagPtr)
 			if err != nil {
 				log.Error("memory-idx: Failed to retrieve interned string for tag key: ", err)
 				internError.Inc()
@@ -837,7 +837,7 @@ func (m *UnpartitionedMemoryIdx) FindTagValues(orgId uint32, tag, prefix string,
 				valueMap[def.Name.String()] = struct{}{}
 			} else {
 				for _, t := range def.Tags.KeyValues {
-					key, err := idx.IdxIntern.GetNoRefCntString(t.Key)
+					key, err := idx.IdxIntern.GetStringFromPtr(t.Key)
 					if err != nil {
 						log.Error("memory-idx: Failed to retrieve interned string for tag key: ", err)
 						internError.Inc()
@@ -847,7 +847,7 @@ func (m *UnpartitionedMemoryIdx) FindTagValues(orgId uint32, tag, prefix string,
 						continue
 					}
 
-					value, err := idx.IdxIntern.GetNoRefCntString(t.Value)
+					value, err := idx.IdxIntern.GetStringFromPtr(t.Value)
 					if err != nil {
 						log.Error("memory-idx: Failed to retrieve interned string for tag value: ", err)
 						internError.Inc()
@@ -871,7 +871,7 @@ func (m *UnpartitionedMemoryIdx) FindTagValues(orgId uint32, tag, prefix string,
 			return nil, nil
 		}
 
-		tagPtr, err := idx.IdxIntern.GetNoRefCntCompressed([]byte(tag))
+		tagPtr, err := idx.IdxIntern.GetPtrFromByte([]byte(tag))
 		if err != nil {
 			log.Error("memory-idx: Failed to retrieve uintptr for interned tag key: ", err)
 			internError.Inc()
@@ -884,7 +884,7 @@ func (m *UnpartitionedMemoryIdx) FindTagValues(orgId uint32, tag, prefix string,
 
 		res = make([]string, 0, len(vals))
 		for valPtr := range vals {
-			val, err := idx.IdxIntern.GetNoRefCntString(valPtr)
+			val, err := idx.IdxIntern.GetStringFromPtr(valPtr)
 			if err != nil {
 				log.Error("memory-idx: Failed to retrieve interned string for tag value: ", err)
 				internError.Inc()
@@ -945,7 +945,7 @@ func (m *UnpartitionedMemoryIdx) Tags(orgId uint32, filter string, from int64) (
 	}
 
 	for tagPtr := range tags {
-		tag, err := idx.IdxIntern.GetNoRefCntString(tagPtr)
+		tag, err := idx.IdxIntern.GetStringFromPtr(tagPtr)
 		if err != nil {
 			log.Error("memory-idx: Failed to retrieve interned string for tag key: ", err)
 			internError.Inc()
@@ -967,7 +967,7 @@ func (m *UnpartitionedMemoryIdx) Tags(orgId uint32, filter string, from int64) (
 }
 
 func (m *UnpartitionedMemoryIdx) hasOneMetricFrom(tags TagIndex, tag string, from int64) bool {
-	tagPtr, err := idx.IdxIntern.GetNoRefCntCompressed([]byte(tag))
+	tagPtr, err := idx.IdxIntern.GetPtrFromByte([]byte(tag))
 	if err != nil {
 		log.Error("memory-idx: Failed to retrieve uintptr for interned tag key: ", err)
 		internError.Inc()
