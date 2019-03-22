@@ -343,7 +343,7 @@ func (c *CasIdx) updateCassandra(now uint32, inMemory bool, archive idx.Archive,
 func (c *CasIdx) rebuildIndex() {
 	log.Info("cassandra-idx: Rebuilding Memory Index from metricDefinitions in Cassandra")
 	pre := time.Now()
-	var defs []schema.MetricDefinition
+	var defs []idx.MetricDefinition
 	var num int
 	for _, partition := range cluster.Manager.GetPartitions() {
 		defs = c.LoadPartitions([]int32{partition}, defs[:0], pre)
@@ -427,8 +427,8 @@ NAMES:
 
 // ArchiveDefs writes each of the provided defs to the archive table and
 // then deletes the defs from the metric_idx table.
-func (c *CasIdx) ArchiveDefs(defs []schema.MetricDefinition) (int, error) {
-	defChan := make(chan *schema.MetricDefinition, c.cfg.numConns)
+func (c *CasIdx) ArchiveDefs(defs []idx.MetricDefinition) (int, error) {
+	defChan := make(chan *idx.MetricDefinition, c.cfg.numConns)
 	g, ctx := errgroup.WithContext(context.Background())
 
 	// keep track of how many defs were successfully archived.
