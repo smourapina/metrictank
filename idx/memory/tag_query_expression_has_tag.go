@@ -37,7 +37,7 @@ func (e *expressionHasTag) getMatcher() tagStringMatcher {
 }
 
 func (e *expressionHasTag) matchesTag() bool {
-	return true
+	return false
 }
 
 func (e *expressionHasTag) getDefaultDecision() filterDecision {

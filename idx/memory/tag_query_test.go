@@ -608,6 +608,36 @@ func TestExpressionParsing(t *testing.T) {
 			operator:   opEqual,
 			err:        nil,
 		}, {
+			expression: "key!=value",
+			key:        "key",
+			value:      "value",
+			operator:   opNotEqual,
+			err:        nil,
+		}, {
+			expression: "key=~value",
+			key:        "key",
+			value:      "^(?:value)",
+			operator:   opMatch,
+			err:        nil,
+		}, {
+			expression: "key!=~value",
+			key:        "key",
+			value:      "^(?:value)",
+			operator:   opNotMatch,
+			err:        nil,
+		}, {
+			expression: "key^=value",
+			key:        "key",
+			value:      "value",
+			operator:   opPrefix,
+			err:        nil,
+		}, {
+			expression: "__tag=~value",
+			key:        "__tag",
+			value:      "^(?:value)",
+			operator:   opMatchTag,
+			err:        nil,
+		}, {
 			expression: "key!=",
 			key:        "key",
 			value:      "",
@@ -620,48 +650,121 @@ func TestExpressionParsing(t *testing.T) {
 			operator:   opNotHasTag,
 			err:        nil,
 		}, {
-			expression: "key=~",
-			key:        "key",
-			value:      "",
-			operator:   opNotHasTag,
-			err:        nil,
-		}, {
-			expression: "key=~v_alue",
-			key:        "key",
-			value:      "^(?:v_alue)",
-			operator:   opMatch,
-			err:        nil,
-		}, {
-			expression: "k!=~v",
-			key:        "k",
-			value:      "^(?:v)",
-			operator:   opNotMatch,
+			expression: "__tag^=key",
+			key:        "__tag",
+			value:      "key",
+			operator:   opPrefixTag,
 			err:        nil,
 		}, {
 			expression: "key!!=value",
 			err:        errInvalidQuery,
-		}, {
-			expression: "key==value",
-			key:        "key",
-			value:      "=value",
-			operator:   opEqual,
-			err:        nil,
-		}, {
-			expression: "key=~=value",
-			key:        "key",
-			value:      "^(?:=value)",
-			operator:   opMatch,
-			err:        nil,
 		}, {
 			expression: "key",
 			err:        errInvalidQuery,
 		},
 	}
 
-	for _, tc := range testCases {
+	for i, tc := range testCases {
 		expression, err := parseExpression(tc.expression)
 		if err != tc.err || (err == nil && (expression.getKey() != tc.key || expression.getValue() != tc.value || expression.getOperator() != tc.operator)) {
-			t.Fatalf("Expected the values %s, %s, %d, %q, but got %s, %s, %d, %q", tc.key, tc.value, tc.operator, tc.err, expression.getKey(), expression.getValue(), expression.getOperator(), err)
+			t.Fatalf("TC %d: Expected the values %s, %s, %d, %q, but got %s, %s, %d, %q", i, tc.key, tc.value, tc.operator, tc.err, expression.getKey(), expression.getValue(), expression.getOperator(), err)
+		}
+	}
+}
+
+func TestAllCombinationsOfOperators(t *testing.T) {
+	type testMetric struct {
+		id         schema.MKey
+		lastUpdate int64
+		tags       []string
+	}
+
+	ids := getTestIDs(t)
+
+	testMetrics := []testMetric{
+		{ids[0], 1, []string{"key1=value1", "key2=match"}},
+		{ids[1], 2, []string{"key1=value1", "key2=noMatch"}},
+		{ids[2], 3, []string{"key1=value1", "key2=match"}},
+		{ids[3], 4, []string{"key1=value1", "key2=noMatch"}},
+		{ids[4], 5, []string{"key1=value1", "key2=match"}},
+		{ids[5], 6, []string{"key1=value1", "key3=noMatch"}},
+		{ids[6], 7, []string{"key1=value2", "key2=match"}},
+		{ids[7], 8, []string{"key4=value2", "key3=noMatch"}},
+	}
+
+	tagIdx := make(TagIndex)
+	byId := make(map[schema.MKey]*idx.Archive)
+
+	for i, d := range testMetrics {
+		byId[d.id] = &idx.Archive{}
+		byId[d.id].Name = fmt.Sprintf("metric%d", i)
+		byId[d.id].Tags = d.tags
+		byId[d.id].LastUpdate = d.lastUpdate
+		for _, tag := range d.tags {
+			tagSplits := strings.Split(tag, "=")
+			tagIdx.addTagId(tagSplits[0], tagSplits[1], d.id)
+		}
+		tagIdx.addTagId("name", byId[d.id].Name, d.id)
+	}
+
+	initialExpressions := map[string][]int{
+		// "key1=value1":  []int{0, 1, 2, 3, 4, 5},
+		// "key1=~.*1$":   []int{0, 1, 2, 3, 4, 5},
+		// "key1^=value1": []int{0, 1, 2, 3, 4, 5},
+		// "__tag=~.*1$":  []int{0, 1, 2, 3, 4, 5, 6},
+		// "key1!=":       []int{0, 1, 2, 3, 4, 5, 6},
+		"__tag^=key1": []int{0, 1, 2, 3, 4, 5, 6},
+	}
+
+	filterExpressions := map[string][]int{
+		// "key2=match":    []int{0, 2, 4, 6},
+		// "key2!=noMatch": []int{0, 2, 4, 5, 6, 7},
+		// "key2=~^m":      []int{0, 2, 4, 6},
+		// "key2!=~^no":    []int{0, 2, 4, 5, 6, 7},
+		// "key2^=m":       []int{0, 2, 4, 6},
+		"__tag=~.*2":  []int{0, 1, 2, 3, 4, 6},
+		"key2!=":      []int{0, 1, 2, 3, 4, 6},
+		"key3=":       []int{0, 1, 2, 3, 4, 6},
+		"__tag^=key2": []int{0, 1, 2, 3, 4, 6},
+	}
+
+	intersect := func(set1, set2 []int) []int {
+		var res []int
+	OUTER:
+		for _, val1 := range set1 {
+			for _, val2 := range set2 {
+				if val1 == val2 {
+					res = append(res, val1)
+					continue OUTER
+				}
+			}
+		}
+		return res
+	}
+
+	makeIdSet := func(positions []int) IdSet {
+		res := make(IdSet, len(positions))
+		for _, position := range positions {
+			res[ids[position]] = struct{}{}
+		}
+
+		return res
+	}
+
+	for initialExpression, initialResult := range initialExpressions {
+		for filterExpression, filterResult := range filterExpressions {
+			expectedResult := makeIdSet(intersect(initialResult, filterResult))
+
+			q, err := NewTagQuery([]string{initialExpression, filterExpression}, 0)
+			if err != nil {
+				t.Fatalf("Error initializing tag query with expressions: \"%s\" / \"%s\"", initialExpression, filterExpression)
+			}
+			q.initForIndex(byId, tagIdx, nil, nil)
+			result := q.Run()
+
+			if !reflect.DeepEqual(expectedResult, result) {
+				t.Fatalf("Unexpected result with expressions: \"%s\" / \"%s\". Expected %+v, got %+v", initialExpression, filterExpression, expectedResult, result)
+			}
 		}
 	}
 }
