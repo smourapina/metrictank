@@ -373,7 +373,10 @@ func (m *UnpartitionedMemoryIdx) AddOrUpdate(mkey schema.MKey, data *schema.Metr
 
 	m.RUnlock()
 
-	def := idx.MetricDefinitionFromMetricDataWithMKey(mkey, data)
+	def, err := idx.MetricDefinitionFromMetricDataWithMKey(mkey, data)
+	if err != nil {
+		return idx.Archive{}, 0, false
+	}
 	def.Partition = partition
 
 	m.Lock()
