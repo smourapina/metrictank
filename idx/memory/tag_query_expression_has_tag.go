@@ -44,6 +44,10 @@ func (e *expressionHasTag) getDefaultDecision() filterDecision {
 	return fail
 }
 
+func (e *expressionHasTag) isTagQueryOperator() bool {
+	return true
+}
+
 func (e *expressionHasTag) stringIntoBuilder(builder *strings.Builder) {
 	builder.WriteString(e.key)
 	builder.WriteString("!=")

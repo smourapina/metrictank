@@ -75,6 +75,10 @@ func (e *expressionMatchTag) getDefaultDecision() filterDecision {
 	return fail
 }
 
+func (e *expressionMatchTag) isTagQueryOperator() bool {
+	return true
+}
+
 func (e *expressionMatchTag) stringIntoBuilder(builder *strings.Builder) {
 	builder.WriteString("__tag=~")
 	builder.WriteString(e.value)

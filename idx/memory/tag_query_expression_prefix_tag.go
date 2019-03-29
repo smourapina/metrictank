@@ -44,6 +44,10 @@ func (e *expressionPrefixTag) getDefaultDecision() filterDecision {
 	return fail
 }
 
+func (e *expressionPrefixTag) isTagQueryOperator() bool {
+	return true
+}
+
 func (e *expressionPrefixTag) stringIntoBuilder(builder *strings.Builder) {
 	builder.WriteString("__tag^=")
 	builder.WriteString(e.value)

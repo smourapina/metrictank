@@ -707,25 +707,69 @@ func TestAllCombinationsOfOperators(t *testing.T) {
 		tagIdx.addTagId("name", byId[d.id].Name, d.id)
 	}
 
-	initialExpressions := map[string][]int{
-		// "key1=value1":  []int{0, 1, 2, 3, 4, 5},
-		// "key1=~.*1$":   []int{0, 1, 2, 3, 4, 5},
-		// "key1^=value1": []int{0, 1, 2, 3, 4, 5},
-		// "__tag=~.*1$":  []int{0, 1, 2, 3, 4, 5, 6},
-		// "key1!=":       []int{0, 1, 2, 3, 4, 5, 6},
-		"__tag^=key1": []int{0, 1, 2, 3, 4, 5, 6},
+	type testExpression struct {
+		expression        string
+		isTagQuery        bool
+		expectedResultSet []int
 	}
 
-	filterExpressions := map[string][]int{
-		// "key2=match":    []int{0, 2, 4, 6},
-		// "key2!=noMatch": []int{0, 2, 4, 5, 6, 7},
-		// "key2=~^m":      []int{0, 2, 4, 6},
-		// "key2!=~^no":    []int{0, 2, 4, 5, 6, 7},
-		// "key2^=m":       []int{0, 2, 4, 6},
-		"__tag=~.*2":  []int{0, 1, 2, 3, 4, 6},
-		"key2!=":      []int{0, 1, 2, 3, 4, 6},
-		"key3=":       []int{0, 1, 2, 3, 4, 6},
-		"__tag^=key2": []int{0, 1, 2, 3, 4, 6},
+	firstExpressions := []testExpression{
+		{
+			expression:        "key1=value1",
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5},
+		}, {
+			expression:        "key1=~.*1$",
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5},
+		}, {
+			expression:        "key1^=value1",
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5},
+		}, {
+			expression:        "__tag=~.*1$",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5, 6},
+		}, {
+			expression:        "key1!=",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5, 6},
+		}, {
+			expression:        "__tag^=key1",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 5, 6},
+		},
+	}
+
+	secondExpressions := []testExpression{
+		{
+			expression:        "key2=match",
+			expectedResultSet: []int{0, 2, 4, 6},
+		}, {
+			expression:        "key2!=noMatch",
+			expectedResultSet: []int{0, 2, 4, 5, 6, 7},
+		}, {
+			expression:        "key2=~^m",
+			expectedResultSet: []int{0, 2, 4, 6},
+		}, {
+			expression:        "key2!=~^no",
+			expectedResultSet: []int{0, 2, 4, 5, 6, 7},
+		}, {
+			expression:        "key2^=m",
+			expectedResultSet: []int{0, 2, 4, 6},
+		}, {
+			expression:        "__tag=~.*2",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 6},
+		}, {
+			expression:        "key2!=",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 6},
+		}, {
+			expression:        "key3=",
+			expectedResultSet: []int{0, 1, 2, 3, 4, 6},
+		}, {
+			expression:        "__tag^=key2",
+			isTagQuery:        true,
+			expectedResultSet: []int{0, 1, 2, 3, 4, 6},
+		},
 	}
 
 	intersect := func(set1, set2 []int) []int {
@@ -751,19 +795,122 @@ func TestAllCombinationsOfOperators(t *testing.T) {
 		return res
 	}
 
-	for initialExpression, initialResult := range initialExpressions {
-		for filterExpression, filterResult := range filterExpressions {
-			expectedResult := makeIdSet(intersect(initialResult, filterResult))
+	resultCompare := func(expected, result IdSet, expressions []string) {
+		if !reflect.DeepEqual(expected, result) {
+			// put results and expected results into a sorted slice, just to make the output easier to understand
+			expectedSlice := make([]string, 0, len(expected))
+			for k := range expected {
+				expectedSlice = append(expectedSlice, k.String())
+			}
+			sort.Strings(expectedSlice)
 
-			q, err := NewTagQuery([]string{initialExpression, filterExpression}, 0)
-			if err != nil {
-				t.Fatalf("Error initializing tag query with expressions: \"%s\" / \"%s\"", initialExpression, filterExpression)
+			resultSlice := make([]string, 0, len(result))
+			for k := range result {
+				resultSlice = append(resultSlice, k.String())
+			}
+			sort.Strings(resultSlice)
+
+			t.Fatalf("Unexpected result with expressions: \"%+v\". \nExpected %+v \nGot      %+v", expressions, expectedSlice, resultSlice)
+		}
+	}
+
+	// only test with metric index, without meta tags
+	for _, first := range firstExpressions {
+		for _, second := range secondExpressions {
+			expectedResult := makeIdSet(intersect(first.expectedResultSet, second.expectedResultSet))
+			expectError := false
+
+			if first.isTagQuery && second.isTagQuery {
+				expectError = true
+			}
+
+			q, err := NewTagQuery([]string{first.expression, second.expression}, 0)
+			if expectError {
+				if err == nil {
+					t.Fatalf("No error initializing tag query, but error was expected, with expressions: \"%s\" / \"%s\"", first.expression, second.expression)
+				}
+				continue
+			} else {
+				if err != nil {
+					t.Fatalf("Error initializing tag query with expressions: \"%s\" / \"%s\"", first.expression, second.expression)
+				}
 			}
 			q.initForIndex(byId, tagIdx, nil, nil)
 			result := q.Run()
 
-			if !reflect.DeepEqual(expectedResult, result) {
-				t.Fatalf("Unexpected result with expressions: \"%s\" / \"%s\". Expected %+v, got %+v", initialExpression, filterExpression, expectedResult, result)
+			resultCompare(expectedResult, result, []string{first.expression, second.expression})
+		}
+	}
+
+	// run a similar set of tests, querying by meta tags
+	for _, first := range firstExpressions {
+		for _, second := range secondExpressions {
+			mtr := make(metaTagRecords)
+			mti := make(metaTagIndex)
+
+			expectError := first.isTagQuery && second.isTagQuery
+			hash, record, _, _, err := mtr.upsert([]string{"metaTag=metaValue"}, []string{first.expression, second.expression})
+			if expectError {
+				if err == nil {
+					t.Fatalf("Expected error when inserting into meta tag records, but did not get one, with expressions: \"%s\" / \"%s\"", first.expression, second.expression)
+				} else {
+					continue
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error when inserting into meta tag records with expressions: \"%s\" / \"%s\": %s", first.expression, second.expression, err)
+				}
+			}
+
+			mti.insertRecord(record.metaTags[0], hash)
+			expected := makeIdSet(intersect(first.expectedResultSet, second.expectedResultSet))
+
+			q, err := NewTagQuery([]string{"metaTag=metaValue"}, 0)
+			if err != nil {
+				t.Fatalf("Error initializing tag query with expressions: \"%s\" / \"%s\"", first.expression, second.expression)
+			}
+
+			q.initForIndex(byId, tagIdx, mti, mtr)
+			result := q.Run()
+
+			resultCompare(expected, result, []string{first.expression, second.expression})
+		}
+	}
+
+	// now run mixed queries of metric tags and meta tags
+	for _, first := range firstExpressions {
+		for _, firstMeta := range firstExpressions {
+			for _, secondMeta := range secondExpressions {
+				mtr := make(metaTagRecords)
+				mti := make(metaTagIndex)
+
+				expectError := firstMeta.isTagQuery && secondMeta.isTagQuery
+				hash, record, _, _, err := mtr.upsert([]string{"metaTag=metaValue"}, []string{firstMeta.expression, secondMeta.expression})
+				if expectError {
+					if err == nil {
+						t.Fatalf("Expected error when inserting into meta tag records, but did not get one, with expressions: \"%s\" / \"%s\"", firstMeta.expression, secondMeta.expression)
+					} else {
+						continue
+					}
+				} else {
+					if err != nil {
+						t.Fatalf("Unexpected error when inserting into meta tag records with expressions: \"%s\" / \"%s\": %s", firstMeta.expression, secondMeta.expression, err)
+					}
+				}
+
+				mti.insertRecord(record.metaTags[0], hash)
+				expectedMetaResult := intersect(firstMeta.expectedResultSet, secondMeta.expectedResultSet)
+				expectedResult := makeIdSet(intersect(first.expectedResultSet, expectedMetaResult))
+
+				q, err := NewTagQuery([]string{first.expression, "metaTag=metaValue"}, 0)
+				if err != nil {
+					t.Fatalf("Error initializing tag query with expressions: \"%s\" & meta \"%s\" / \"%s\"", first.expression, firstMeta.expression, secondMeta.expression)
+				}
+
+				q.initForIndex(byId, tagIdx, mti, mtr)
+				result := q.Run()
+
+				resultCompare(expectedResult, result, []string{first.expression, firstMeta.expression, secondMeta.expression})
 			}
 		}
 	}

@@ -48,6 +48,7 @@ type expression interface {
 	hasRe() bool
 	matchesTag() bool
 	isPositiveOperator() bool
+	isTagQueryOperator() bool
 	stringIntoBuilder(builder *strings.Builder)
 }
 

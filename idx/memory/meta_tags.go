@@ -87,10 +87,17 @@ func newMetaTagRecord(metaTags []string, tagQueryExpressions []string) (metaTagR
 		record.metaTags = append(record.metaTags, kv{key: tagSplits[0], value: tagSplits[1]})
 	}
 
+	haveTagOperator := false
 	for _, query := range tagQueryExpressions {
 		parsed, err := parseExpression(query)
 		if err != nil {
 			return record, err
+		}
+		if parsed.isTagQueryOperator() {
+			if haveTagOperator {
+				return record, fmt.Errorf("Only one tag operator is allowed per query")
+			}
+			haveTagOperator = true
 		}
 		record.queries = append(record.queries, parsed)
 	}

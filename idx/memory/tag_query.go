@@ -72,10 +72,20 @@ func tagQueryFromExpressions(expressions []expression, from int64, subQuery bool
 
 	// every set of expressions must have at least one positive operator (=, =~, ^=, <tag>!=<empty>, __tag^=, __tag=~)
 	foundPositiveOperator := false
+
+	// there can never be more than one tag query
+	foundTagQuery := false
 	for _, e := range expressions {
 
 		if !foundPositiveOperator && e.isPositiveOperator() {
 			foundPositiveOperator = true
+		}
+
+		if e.isTagQueryOperator() {
+			if foundTagQuery {
+				return nil, errInvalidQuery
+			}
+			foundTagQuery = true
 		}
 
 		q.mixedExpressions = append(q.mixedExpressions, e)
@@ -449,7 +459,7 @@ func (q *TagQuery) sortByCostWithMeta() {
 
 		// match tag and prefix tag operator expressions always take the meta index
 		// into account, unless using the meta index is disabled for this query
-		if op == opMatchTag || op == opPrefixTag {
+		if op == opMatchTag || op == opPrefixTag || op == opHasTag {
 			q.tagQuery = e
 		} else {
 			if _, ok := q.metaIndex[e.getKey()]; ok {
@@ -487,7 +497,7 @@ func (q *TagQuery) sortByCostWithoutMeta() {
 	for i, e := range q.metricExpressions {
 		op := e.getOperator()
 
-		if op == opMatchTag || op == opPrefixTag {
+		if op == opMatchTag || op == opPrefixTag || op == opHasTag {
 			q.tagQuery = e
 			q.metricExpressions = append(q.metricExpressions[:i], q.metricExpressions[i+1:]...)
 
@@ -511,6 +521,7 @@ func (q *TagQuery) sortByCostWithoutMeta() {
 
 func (q *TagQuery) sortByCost() {
 	if q.subQuery {
+		// if this is a sub query we never want to take the meta tags into account to prevent loops
 		q.sortByCostWithoutMeta()
 	} else {
 		q.sortByCostWithMeta()
