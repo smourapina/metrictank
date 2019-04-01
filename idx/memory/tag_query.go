@@ -161,10 +161,10 @@ func (q *TagQuery) run() chan schema.MKey {
 	results := make(chan schema.MKey, 10000)
 	prepareFiltersWg.Wait()
 
-	// start the tag query workers. they'll consume the ids on the idCh and
-	// evaluate for each of them whether it satisfies all the conditions
-	// defined in the query expressions. those that satisfy all conditions
-	// will be pushed into the resCh
+	// start the tag query workers. they'll consume the ids on the channel
+	// initialIds and evaluate for each of them whether it satisfies all the
+	// conditions defined in the query expressions. those that satisfy all
+	// conditions will be pushed into the results channel
 	for i := 0; i < TagQueryWorkers; i++ {
 		go q.filterIdsFromChan(&workersWg, initialIds, results)
 	}
@@ -177,6 +177,11 @@ func (q *TagQuery) run() chan schema.MKey {
 	return results
 }
 
+// initForIndex takes all the index-datastructures and assigns them to this tag query
+// if this tag query has been instantiated from a query given by the user, it will
+// simply get these structs assigned from idx.UnpartitionedMemoryIndex, if it has been
+// instantiated as a sub query to evaluate a meta tag then it gets the data structures
+// copied from the parent query
 func (q *TagQuery) initForIndex(defById map[schema.MKey]*idx.Archive, idx TagIndex, mti metaTagIndex, mtr metaTagRecords) {
 	q.index = idx
 	q.byId = defById
@@ -184,6 +189,9 @@ func (q *TagQuery) initForIndex(defById map[schema.MKey]*idx.Archive, idx TagInd
 	q.metaRecords = mtr
 }
 
+// subQueryFromExpressions is used to evaluate a meta tag. when a meta tag needs to
+// be evaluated we take its associated query expressions and instantiate a sub-query
+// from them
 func (q *TagQuery) subQueryFromExpressions(expressions []expression) (*TagQuery, error) {
 	query, err := tagQueryFromExpressions(expressions, q.from, true)
 	if err != nil {
@@ -197,9 +205,8 @@ func (q *TagQuery) subQueryFromExpressions(expressions []expression) (*TagQuery,
 	return query, nil
 }
 
-// getInitialIds asynchronously collects all ID's of the initial result set.  It returns:
-// a channel through which the IDs of the initial result set will be sent
-// a stop channel, which when closed, will cause it to abort the background worker.
+// getInitialIds asynchronously collects all IDs of the initial result set.
+// It returns a stop channel, which when closed, will cause it to abort the background worker.
 func (q *TagQuery) getInitialIds(wg *sync.WaitGroup, idCh chan schema.MKey) chan struct{} {
 	stopCh := make(chan struct{})
 	wg.Add(1)
@@ -213,6 +220,9 @@ func (q *TagQuery) getInitialIds(wg *sync.WaitGroup, idCh chan schema.MKey) chan
 	return stopCh
 }
 
+// getInitialByTagValue generates an initial ID set which is later filtered down
+// it only handles those expressions which involve matching a tag value:
+// f.e. key=value but not key!=
 func (q *TagQuery) getInitialByTagValue(wg *sync.WaitGroup, idCh chan schema.MKey, stopCh chan struct{}) {
 	key := q.initialExpression.getKey()
 	match := q.initialExpression.getMatcher()
@@ -237,6 +247,9 @@ func (q *TagQuery) getInitialByTagValue(wg *sync.WaitGroup, idCh chan schema.MKe
 		}
 	}()
 
+	// sortByCost() will usually try to not choose an expression that involves
+	// meta tags as the initial expression, but if necessary we need to
+	// evaluate those too
 	if !q.subQuery && q.initialExpressionUseMeta {
 		for v, records := range q.metaIndex[key] {
 			if !match(v) {
@@ -275,8 +288,9 @@ func (q *TagQuery) getInitialByTagValue(wg *sync.WaitGroup, idCh chan schema.MKe
 	}()
 }
 
-// getInitialByTagPrefix generates the initial resultset by creating a list of
-// metric IDs of which at least one tag starts with the defined prefix
+// getInitialByTag generates an initial ID set which is later filtered down
+// it only handles those expressions which do not involve matching a tag value:
+// f.e. key!= but not key=value
 func (q *TagQuery) getInitialByTag(wg *sync.WaitGroup, idCh chan schema.MKey, stopCh chan struct{}) {
 	match := q.initialExpression.getMatcher()
 	initialIdsWg := sync.WaitGroup{}
@@ -302,6 +316,9 @@ func (q *TagQuery) getInitialByTag(wg *sync.WaitGroup, idCh chan schema.MKey, st
 		}
 	}()
 
+	// sortByCost() will usually try to not choose an expression that involves
+	// meta tags as the initial expression, but if necessary we need to
+	// evaluate those too
 	if !q.subQuery && q.initialExpressionUseMeta {
 		for tag, values := range q.metaIndex {
 			if !match(tag) {
