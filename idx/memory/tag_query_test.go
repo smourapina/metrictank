@@ -265,7 +265,15 @@ func TestQueryByTagWithEqualEmpty(t *testing.T) {
 
 func TestQueryByTagWithUnequalEmpty(t *testing.T) {
 	ids := getTestIDs(t)
-	q, _ := NewTagQuery([]string{"key1=value1", "key3!=", "key3!=~"}, 0)
+	q, err := NewTagQuery([]string{"key1=value1", "key3!=", "key3!=~"}, 0)
+	if err == nil {
+		// there should be an error because we only allow one tag operator per query
+		t.Fatalf("Expected error but did not get one")
+	}
+	q, err = NewTagQuery([]string{"key1=value1", "key3!="}, 0)
+	if err != nil {
+		t.Fatalf("Unexpected error when instantiating query")
+	}
 	expect := make(IdSet)
 	expect[ids[1]] = struct{}{}
 	expect[ids[3]] = struct{}{}
