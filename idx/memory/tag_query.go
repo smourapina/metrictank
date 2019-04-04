@@ -2,6 +2,7 @@ package memory
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -50,8 +51,9 @@ type filter struct {
 // RunGetTags() which returns a list of tags of the matching metrics
 type TagQuery struct {
 	// clause that operates on LastUpdate field
-	from    int64
-	filters []filter
+	from              int64
+	filters           []filter
+	metaRecordFilters [][]metaRecordFilter
 
 	metricExpressions        []expression
 	mixedExpressions         []expression
@@ -65,6 +67,20 @@ type TagQuery struct {
 	metaRecords metaTagRecords
 
 	subQuery bool
+}
+
+func tagMapFromStrings(tags []string) (map[string]string, error) {
+	res := make(map[string]string, len(tags))
+	var err error
+	for _, tag := range tags {
+		equal := strings.Index(tag, "=")
+		if equal < 0 {
+			err = fmt.Errorf("invalid tag string")
+			continue
+		}
+		res[tag[:equal]] = tag[equal:]
+	}
+	return res, err
 }
 
 func tagQueryFromExpressions(expressions []expression, from int64, subQuery bool) (*TagQuery, error) {
@@ -372,13 +388,33 @@ func (q *TagQuery) testByAllExpressions(id schema.MKey, def *idx.Archive, omitTa
 	var recordIds []uint32
 	var records []metaTagRecord
 	var evaluators []metaRecordEvaluator
-	for _, filter := range q.filters {
+	for i, filter := range q.filters {
 		if res = filter.test(def); res == pass {
 			continue
 		}
 		if res == fail {
 			return false
 		}
+
+		if i >= len(q.metaRecordFilters) {
+			corruptIndex.Inc()
+			return false
+		}
+
+		tags, err := tagMapFromStrings(def.Tags)
+		if err != nil {
+			corruptIndex.Inc()
+			return false
+		}
+
+		// check if any of the meta records that match this filter
+		// would get added to the set of tags of this metric
+		for _, metaRecordFilter := range q.metaRecordFilters[i] {
+			if metaRecordFilter(tags) {
+				return true
+			}
+		}
+		return false
 
 		recordIds = filter.expr.getMetaRecords(q.metaIndex)
 		records = q.metaRecords.getRecords(recordIds)
@@ -438,7 +474,18 @@ func (q *TagQuery) filterIdsFromChan(wg *sync.WaitGroup, idCh, resCh chan schema
 }
 
 func (q *TagQuery) prepareFilters() {
-	q.filters = make([]filter, len(q.metricExpressions)+len(q.mixedExpressions))
+	appendTagQuery := false
+	if q.tagQuery != nil && q.tagQuery != q.initialExpression {
+		appendTagQuery = true
+		q.filters = make([]filter, len(q.metricExpressions)+len(q.mixedExpressions)+1)
+		q.metaRecordFilters = make([][]metaRecordFilter, len(q.metricExpressions)+len(q.mixedExpressions)+1)
+	} else {
+		q.filters = make([]filter, len(q.metricExpressions)+len(q.mixedExpressions))
+		q.metaRecordFilters = make([][]metaRecordFilter, len(q.mixedExpressions))
+	}
+
+	var recordIds []uint32
+	var records []metaTagRecord
 	i := 0
 	for _, expr := range q.metricExpressions {
 		q.filters[i] = filter{
@@ -456,15 +503,27 @@ func (q *TagQuery) prepareFilters() {
 			defaultDecision: expr.getDefaultDecision(),
 			meta:            true,
 		}
+		recordIds = expr.getMetaRecords(q.metaIndex)
+		records = q.metaRecords.getRecords(recordIds)
+		q.metaRecordFilters[i] = make([]metaRecordFilter, len(records))
+		for j := range records {
+			q.metaRecordFilters[i][j] = records[j].filterByTags
+		}
 		i++
 	}
-	if q.tagQuery != nil && q.tagQuery != q.initialExpression {
-		q.filters = append(q.filters, filter{
+	if appendTagQuery {
+		q.filters[i] = filter{
 			expr:            q.tagQuery,
 			test:            q.tagQuery.getFilter(),
 			defaultDecision: q.tagQuery.getDefaultDecision(),
 			meta:            true,
-		})
+		}
+		recordIds = q.tagQuery.getMetaRecords(q.metaIndex)
+		records = q.metaRecords.getRecords(recordIds)
+		q.metaRecordFilters[i] = make([]metaRecordFilter, len(records))
+		for j := range records {
+			q.metaRecordFilters[i][j] = records[j].filterByTags
+		}
 	}
 }
 
@@ -623,17 +682,15 @@ IDS:
 
 		// generate a set of all tags of the current metric that satisfy the
 		// tag filter condition
+		tags, err := tagMapFromStrings(def.Tags)
+		if err != nil {
+			corruptIndex.Inc()
+			log.Errorf("memory-idx: ID %q has tags %+v with invalid format", id, def.Tags)
+			continue
+		}
+
 		metricTags := make(map[string]struct{}, 0)
-		for _, tag := range def.Tags {
-			equal := strings.Index(tag, "=")
-			if equal < 0 {
-				corruptIndex.Inc()
-				log.Errorf("memory-idx: ID %q has tag %q in index without '=' sign", id, tag)
-				continue
-			}
-
-			key := tag[:equal]
-
+		for key := range tags {
 			// this tag has already been pushed into tagCh, so we can stop evaluating
 			if _, ok := resultsCache[key]; ok {
 				continue
