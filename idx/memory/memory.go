@@ -21,7 +21,6 @@ import (
 	"github.com/grafana/metrictank/mdata"
 	"github.com/grafana/metrictank/stats"
 	"github.com/raintank/schema"
-	goi "github.com/robert-milan/go-object-interning"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -51,7 +50,11 @@ var (
 	// metric idx.metrics_active is the number of currently known metrics in the index
 	statMetricsActive = stats.NewGauge32("idx.metrics_active")
 
-<<<<<<< HEAD
+	// metric idx.memory.intern.memory is the total memory used by the interning layer in bytes by object size
+	statInternMemory = make([]*stats.Gauge64, 256)
+	// metric idx.memory.intern.fragmentation is the total fragmentation percent of the object store used by the interning layer by object size
+	statInternFragmentation = make([]*stats.Gauge32, 256)
+
 	Enabled                      bool
 	matchCacheSize               int
 	maxPruneLockTime             = time.Millisecond * 100
@@ -66,20 +69,6 @@ var (
 	findCacheInvalidateMaxSize   = 100
 	findCacheInvalidateMaxWait   = 5 * time.Second
 	findCacheBackoffTime         = time.Minute
-=======
-	Enabled                  bool
-	matchCacheSize           int
-	maxPruneLockTime         = time.Millisecond * 100
-	maxPruneLockTimeStr      string
-	TagSupport               bool
-	TagQueryWorkers          int // number of workers to spin up when evaluating tag expressions
-	indexRulesFile           string
-	IndexRules               conf.IndexRules
-	Partitioned              bool
-	findCacheSize            = 1000
-	findCacheInvalidateQueue = 100
-	findCacheBackoff         = time.Minute
->>>>>>> Fixes after rebase
 )
 
 func ConfigSetup() {
@@ -281,28 +270,34 @@ type UnpartitionedMemoryIdx struct {
 
 	// used to reduce contention
 	findCache *FindCache
-
-	// used to intern objects used by the index to reduce memory overhead
-	// currently it is only used by the tag index
-	objIntern *goi.ObjectIntern
 }
 
 func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
+	// instantiate strats for the interning layer/object store
+	for i := 0; i < 256; i++ {
+		statInternMemory[i] = stats.NewGauge64(fmt.Sprintf("idx.memory.intern.memory.%d", i))
+		statInternFragmentation[i] = stats.NewGauge32(fmt.Sprintf("idx.memory.intern.fragmentation.%d", i))
+	}
+
+	// gather memory and fragmentation statistics on the object store every minute
+	go func() {
+		for {
+			for _, internMemStat := range idx.IdxIntern.MemStatsPerPool() {
+				statInternMemory[internMemStat.ObjSize].SetUint64(internMemStat.MemUsed)
+			}
+			for _, internFragStat := range idx.IdxIntern.FragStatsPerPool() {
+				// need to fix this in the interning library or object store
+				statInternFragmentation[internFragStat.ObjSize].SetUint32(uint32(100 - (internFragStat.FragPercent * 100)))
+			}
+			time.Sleep(time.Minute)
+		}
+	}()
 	return &UnpartitionedMemoryIdx{
 		defById:     make(map[schema.MKey]*idx.Archive),
 		defByTagSet: make(defByTagSet),
 		tree:        make(map[uint32]*Tree),
 		tags:        make(map[uint32]TagIndex),
-<<<<<<< HEAD
 		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueueSize, findCacheInvalidateMaxSize, findCacheInvalidateMaxWait, findCacheBackoffTime),
-=======
-		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueue, findCacheBackoff),
-<<<<<<< HEAD
-		objIntern:   goi.NewObjectIntern(oiCnf),
->>>>>>> add initial memory interning logic
-=======
-		objIntern:   goi.NewObjectIntern(goi.NewConfig()),
->>>>>>> Fixes after rebase
 	}
 }
 
