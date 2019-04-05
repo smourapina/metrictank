@@ -71,6 +71,14 @@ var (
 	findCacheBackoffTime         = time.Minute
 )
 
+func init() {
+	// instantiate strats for the interning layer/object store
+	for i := 0; i < 256; i++ {
+		statInternMemory[i] = stats.NewGauge64(fmt.Sprintf("idx.memory.intern.memory.%d", i))
+		statInternFragmentation[i] = stats.NewGauge32(fmt.Sprintf("idx.memory.intern.fragmentation.%d", i))
+	}
+}
+
 func ConfigSetup() {
 	memoryIdx := flag.NewFlagSet("memory-idx", flag.ExitOnError)
 	memoryIdx.BoolVar(&Enabled, "enabled", false, "")
@@ -285,16 +293,9 @@ func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
 		shutdown:    make(chan struct{}),
 	}
 
-	// instantiate strats for the interning layer/object store
-	for i := 0; i < 256; i++ {
-		statInternMemory[i] = stats.NewGauge64(fmt.Sprintf("idx.memory.intern.memory.%d", i))
-		statInternFragmentation[i] = stats.NewGauge32(fmt.Sprintf("idx.memory.intern.fragmentation.%d", i))
-	}
-
 	// gather memory and fragmentation statistics on the object store every minute
 	go func(shutdown chan struct{}) {
 		for {
-			time.Sleep(time.Minute)
 			select {
 			case <-shutdown:
 				return
@@ -308,6 +309,7 @@ func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
 				}
 				umi.Unlock()
 			}
+			time.Sleep(time.Minute)
 		}
 	}(umi.shutdown)
 	return umi
