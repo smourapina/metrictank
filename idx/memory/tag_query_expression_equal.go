@@ -50,7 +50,6 @@ func (e *expressionEqual) getMatcher() tagStringMatcher {
 	return func(checkValue string) bool {
 		return checkValue == e.value
 	}
-
 }
 
 func (e *expressionEqual) matchesTag() bool {

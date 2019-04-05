@@ -41,6 +41,7 @@ func (k *kv) stringIntoBuilder(builder *strings.Builder) {
 type filter struct {
 	expr            expression
 	test            tagFilter
+	testMetaRecords []metaRecordFilter
 	defaultDecision filterDecision
 	meta            bool
 }
@@ -51,9 +52,8 @@ type filter struct {
 // RunGetTags() which returns a list of tags of the matching metrics
 type TagQuery struct {
 	// clause that operates on LastUpdate field
-	from              int64
-	filters           []filter
-	metaRecordFilters [][]metaRecordFilter
+	from    int64
+	filters []filter
 
 	metricExpressions        []expression
 	mixedExpressions         []expression
@@ -388,16 +388,11 @@ func (q *TagQuery) testByAllExpressions(id schema.MKey, def *idx.Archive, omitTa
 	var recordIds []uint32
 	var records []metaTagRecord
 	var evaluators []metaRecordEvaluator
-	for i, filter := range q.filters {
+	for _, filter := range q.filters {
 		if res = filter.test(def); res == pass {
 			continue
 		}
 		if res == fail {
-			return false
-		}
-
-		if i >= len(q.metaRecordFilters) {
-			corruptIndex.Inc()
 			return false
 		}
 
@@ -409,7 +404,7 @@ func (q *TagQuery) testByAllExpressions(id schema.MKey, def *idx.Archive, omitTa
 
 		// check if any of the meta records that match this filter
 		// would get added to the set of tags of this metric
-		for _, metaRecordFilter := range q.metaRecordFilters[i] {
+		for _, metaRecordFilter := range filter.testMetaRecords {
 			if metaRecordFilter(tags) {
 				return true
 			}
@@ -478,14 +473,11 @@ func (q *TagQuery) prepareFilters() {
 	if q.tagQuery != nil && q.tagQuery != q.initialExpression {
 		appendTagQuery = true
 		q.filters = make([]filter, len(q.metricExpressions)+len(q.mixedExpressions)+1)
-		q.metaRecordFilters = make([][]metaRecordFilter, len(q.metricExpressions)+len(q.mixedExpressions)+1)
 	} else {
 		q.filters = make([]filter, len(q.metricExpressions)+len(q.mixedExpressions))
-		q.metaRecordFilters = make([][]metaRecordFilter, len(q.mixedExpressions))
 	}
 
-	var recordIds []uint32
-	var records []metaTagRecord
+	var metaRecords []metaTagRecord
 	i := 0
 	for _, expr := range q.metricExpressions {
 		q.filters[i] = filter{
@@ -497,33 +489,31 @@ func (q *TagQuery) prepareFilters() {
 		i++
 	}
 	for _, expr := range q.mixedExpressions {
-		q.filters[i] = filter{
+		f := filter{
 			expr:            expr,
 			test:            expr.getFilter(),
 			defaultDecision: expr.getDefaultDecision(),
 			meta:            true,
 		}
-		recordIds = expr.getMetaRecords(q.metaIndex)
-		records = q.metaRecords.getRecords(recordIds)
-		q.metaRecordFilters[i] = make([]metaRecordFilter, len(records))
-		for j := range records {
-			q.metaRecordFilters[i][j] = records[j].filterByTags
+		metaRecords = q.metaRecords.getRecords(expr.getMetaRecords(q.metaIndex))
+		for _, record := range metaRecords {
+			f.testMetaRecords = append(f.testMetaRecords, record.filterByTags)
 		}
+		q.filters[i] = f
 		i++
 	}
 	if appendTagQuery {
-		q.filters[i] = filter{
+		f := filter{
 			expr:            q.tagQuery,
 			test:            q.tagQuery.getFilter(),
 			defaultDecision: q.tagQuery.getDefaultDecision(),
 			meta:            true,
 		}
-		recordIds = q.tagQuery.getMetaRecords(q.metaIndex)
-		records = q.metaRecords.getRecords(recordIds)
-		q.metaRecordFilters[i] = make([]metaRecordFilter, len(records))
-		for j := range records {
-			q.metaRecordFilters[i][j] = records[j].filterByTags
+		metaRecords = q.metaRecords.getRecords(q.tagQuery.getMetaRecords(q.metaIndex))
+		for _, record := range metaRecords {
+			f.testMetaRecords = append(f.testMetaRecords, record.filterByTags)
 		}
+		q.filters[i] = f
 	}
 }
 
