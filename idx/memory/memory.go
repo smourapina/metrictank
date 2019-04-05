@@ -270,9 +270,21 @@ type UnpartitionedMemoryIdx struct {
 
 	// used to reduce contention
 	findCache *FindCache
+
+	// used to stop interning layer stats reporting
+	shutdown chan struct{}
 }
 
 func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
+	umi := &UnpartitionedMemoryIdx{
+		defById:     make(map[schema.MKey]*idx.Archive),
+		defByTagSet: make(defByTagSet),
+		tree:        make(map[uint32]*Tree),
+		tags:        make(map[uint32]TagIndex),
+		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueueSize, findCacheInvalidateMaxSize, findCacheInvalidateMaxWait, findCacheBackoffTime),
+		shutdown:    make(chan struct{}),
+	}
+
 	// instantiate strats for the interning layer/object store
 	for i := 0; i < 256; i++ {
 		statInternMemory[i] = stats.NewGauge64(fmt.Sprintf("idx.memory.intern.memory.%d", i))
@@ -280,25 +292,25 @@ func NewUnpartitionedMemoryIdx() *UnpartitionedMemoryIdx {
 	}
 
 	// gather memory and fragmentation statistics on the object store every minute
-	go func() {
+	go func(shutdown chan struct{}) {
 		for {
-			for _, internMemStat := range idx.IdxIntern.MemStatsPerPool() {
-				statInternMemory[internMemStat.ObjSize].SetUint64(internMemStat.MemUsed)
-			}
-			for _, internFragStat := range idx.IdxIntern.FragStatsPerPool() {
-				// need to fix this in the interning library or object store
-				statInternFragmentation[internFragStat.ObjSize].SetUint32(uint32(100 - (internFragStat.FragPercent * 100)))
-			}
 			time.Sleep(time.Minute)
+			select {
+			case <-shutdown:
+				return
+			default:
+				umi.Lock()
+				for _, internMemStat := range idx.IdxIntern.MemStatsPerPool() {
+					statInternMemory[internMemStat.ObjSize].SetUint64(internMemStat.MemUsed)
+				}
+				for _, internFragStat := range idx.IdxIntern.FragStatsPerPool() {
+					statInternFragmentation[internFragStat.ObjSize].SetUint32(uint32(100 - (internFragStat.FragPercent * 100)))
+				}
+				umi.Unlock()
+			}
 		}
-	}()
-	return &UnpartitionedMemoryIdx{
-		defById:     make(map[schema.MKey]*idx.Archive),
-		defByTagSet: make(defByTagSet),
-		tree:        make(map[uint32]*Tree),
-		tags:        make(map[uint32]TagIndex),
-		findCache:   NewFindCache(findCacheSize, findCacheInvalidateQueueSize, findCacheInvalidateMaxSize, findCacheInvalidateMaxWait, findCacheBackoffTime),
-	}
+	}(umi.shutdown)
+	return umi
 }
 
 func (m *UnpartitionedMemoryIdx) Init() error {
@@ -306,6 +318,7 @@ func (m *UnpartitionedMemoryIdx) Init() error {
 }
 
 func (m *UnpartitionedMemoryIdx) Stop() {
+	m.shutdown <- struct{}{}
 	return
 }
 
