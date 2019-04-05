@@ -163,23 +163,17 @@ func TestMain(m *testing.M) {
 }
 
 func InitSmallIndex() {
-	// if the current index is not the small index then initialize it
-	if currentIndex != 1 || currentlyPartitioned != Partitioned {
-		ix = nil
+	ix = nil
 
-		// run GC because we only get 4G on CircleCI
-		runtime.GC()
-		cluster.Manager.SetPartitions([]int32{0, 1})
-		partitionCount = 2
-		currentlyPartitioned = Partitioned
-		ix = New()
-		ix.Init()
+	// run GC because we only get 4G on CircleCI
+	runtime.GC()
+	cluster.Manager.SetPartitions([]int32{0, 1})
+	partitionCount = 2
+	currentlyPartitioned = Partitioned
+	ix = New()
+	ix.Init()
 
-		currentIndex = 1
-	} else {
-		ix.PurgeFindCache()
-		return
-	}
+	currentIndex = 1
 
 	var data *schema.MetricData
 
@@ -210,23 +204,17 @@ func InitSmallIndex() {
 }
 
 func InitLargeIndex() {
-	// if the current index is not the large index then initialize it
-	if currentIndex != 2 || currentlyPartitioned != Partitioned {
-		ix = nil
+	ix = nil
 
-		// run GC because we only get 4G on CircleCI
-		runtime.GC()
-		cluster.Manager.SetPartitions([]int32{0, 1, 2, 3, 4, 5, 6, 7})
-		partitionCount = 8
-		currentlyPartitioned = Partitioned
-		ix = New()
-		ix.Init()
+	// run GC because we only get 4G on CircleCI
+	runtime.GC()
+	cluster.Manager.SetPartitions([]int32{0, 1, 2, 3, 4, 5, 6, 7})
+	partitionCount = 8
+	currentlyPartitioned = Partitioned
+	ix = New()
+	ix.Init()
 
-		currentIndex = 2
-	} else {
-		ix.PurgeFindCache()
-		return
-	}
+	currentIndex = 2
 
 	var data *schema.MetricData
 	for i, series := range cpuMetrics(5, 1000, 0, 32, "collectd") {
